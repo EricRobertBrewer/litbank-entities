@@ -1,0 +1,13 @@
+# Data set.
+litbank/
+
+# JetBrains.
+.idea/
+*.iml
+
+# Python.
+**/__pycache__/
+venv/
+
+# Jupyter.
+**/.ipynb_checkpoints/
