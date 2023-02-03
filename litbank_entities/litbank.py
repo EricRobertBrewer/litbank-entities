@@ -10,21 +10,25 @@ ENTITY_CATEGORY_TO_INDEX = {c: i for i, c in enumerate(ENTITY_CATEGORIES)}
 ENTITY_CATEGORY_SET = set(ENTITY_CATEGORIES)
 
 
+def _sort_key_file_gutenburg_id(name):
+    return int(name[:name.index('_')])
+
+
 def get_ann_paths(src_path=SRC_PATH_DEFAULT):
     entities_brat_path = os.path.join(src_path, 'entities', 'brat')
-    brat_files = sorted(os.listdir(entities_brat_path))
+    brat_files = sorted(os.listdir(entities_brat_path), key=_sort_key_file_gutenburg_id)
     return [os.path.join(entities_brat_path, file) for file in brat_files if file.endswith('.ann')]
 
 
 def get_txt_paths(src_path=SRC_PATH_DEFAULT):
     entities_brat_path = os.path.join(src_path, 'entities', 'brat')
-    brat_files = sorted(os.listdir(entities_brat_path))
+    brat_files = sorted(os.listdir(entities_brat_path), key=_sort_key_file_gutenburg_id)
     return [os.path.join(entities_brat_path, file) for file in brat_files if file.endswith('.txt')]
 
 
 def get_tsv_paths(src_path=SRC_PATH_DEFAULT):
     entities_tsv_path = os.path.join(src_path, 'entities', 'tsv')
-    tsv_files = sorted(os.listdir(entities_tsv_path))
+    tsv_files = sorted(os.listdir(entities_tsv_path), key=_sort_key_file_gutenburg_id)
     return [os.path.join(entities_tsv_path, file) for file in tsv_files]
 
 
