@@ -84,6 +84,16 @@ def get_text_sentence_tokens_labels(src_path=SRC_PATH_DEFAULT):
     return text_sentence_tokens, text_sentence_labels
 
 
+def flatten_texts(text_sentence_tokens, text_sentence_labels):
+    sentence_tokens, sentence_labels = list(), list()
+    for i in range(len(text_sentence_tokens)):
+        for tokens in text_sentence_tokens[i]:
+            sentence_tokens.append(tokens)
+        for labels in text_sentence_labels[i]:
+            sentence_labels.append(labels)
+    return sentence_tokens, sentence_labels
+
+
 def _get_lines(path):
     with open(path, 'r') as fd:
         return [line.strip('\n') for line in fd.readlines()]
