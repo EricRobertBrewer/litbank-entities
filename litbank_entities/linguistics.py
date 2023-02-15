@@ -6,6 +6,7 @@ TOKEN_OOV = '<OOV>'
 
 def get_vocabulary(sentence_tokens):
     token_to_count = defaultdict(int)
+    token_to_count[TOKEN_OOV] = 0
     for tokens in sentence_tokens:
         for token in tokens:
             token_to_count[token] += 1

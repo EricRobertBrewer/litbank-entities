@@ -3,7 +3,7 @@ import argparse
 import numpy as np
 
 from litbank_entities import litbank, metrics
-from litbank_entities.model import zero_r_recognizer
+from litbank_entities.model import hmm_recognizer, zero_r_recognizer
 
 
 def main():
@@ -11,8 +11,7 @@ def main():
         description='Perform named-entity recognition over `litbank` text samples.'
     )
     parser.add_argument('classname',
-                        default='zero',
-                        choices=['zero'],
+                        choices=['hmm', 'zero'],
                         help='Name of the model.')
     parser.add_argument('--folds',
                         '-F',
@@ -90,13 +89,14 @@ def cross_validation(classname, folds=10, seed=1, mix_texts=False):
         metrics.calculate_fold_averages(fold_category_to_counts, fold_category_to_metrics)
     for level, category_to_metrics in zip(('Macro', 'Micro'), (category_to_metrics_macro, category_to_metrics_micro)):
         print('{}:'.format(level))
-        print_metrics(category_to_metrics)
+        print_metrics_console(category_to_metrics)
 
 
 def create_model(classname):
     if classname == 'zero':
         return zero_r_recognizer.ZeroREntityRecognizer()
-
+    elif classname == 'hmm':
+        return hmm_recognizer.HMMEntityRecognizer(ignore_nested=True)
     raise ValueError('Unexpected model class name: {}'.format(classname))
 
 
@@ -108,7 +108,7 @@ def evaluate(model, train_instances, test_instances):
     return metrics.get_phrase_counts_and_metrics(test_sentence_labels, test_sentence_preds)
 
 
-def print_metrics(category_to_metrics):
+def print_metrics_console(category_to_metrics):
     category_width = max(map(len, litbank.ENTITY_CATEGORIES))
     metrics_ = (metrics.METRIC_PRECISION, metrics.METRIC_RECALL, metrics.METRIC_F1)
     metric_width = max(map(len, metrics_))
