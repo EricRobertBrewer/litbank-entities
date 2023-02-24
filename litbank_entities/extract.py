@@ -109,18 +109,15 @@ def evaluate(model, train_instances, test_instances):
 
 
 def print_metrics_console(category_to_metrics):
-    category_width = max(map(len, litbank.ENTITY_CATEGORIES))
     metrics_ = (metrics.METRIC_PRECISION, metrics.METRIC_RECALL, metrics.METRIC_F1)
-    metric_width = max(map(len, metrics_))
     coverages = (metrics.COVERAGE_EXACT, metrics.COVERAGE_PARTIAL)
-    coverage_width = max(map(len, coverages))
+
     for category in litbank.ENTITY_CATEGORIES:
-        print('  {:<{w}}:'.format(category, w=category_width))
-        for metric in metrics_:
-            print('    {:<{w}}:'.format(metric.capitalize(), w=metric_width))
-            for coverage in coverages:
-                value = category_to_metrics[category][metric][coverage]
-                print('      {:<{w}}: {:.4f}'.format(coverage.capitalize(), value, w=coverage_width))
+        print('{}'.format(category))
+        print('\t'.join(('', *(metric.capitalize() for metric in metrics_))))
+        for coverage in coverages:
+            values = (category_to_metrics[category][metric][coverage] for metric in metrics_)
+            print('\t'.join((coverage.capitalize(), *('{:.4f}'.format(value) for value in values))))
         print()
 
 

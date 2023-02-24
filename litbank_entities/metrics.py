@@ -54,11 +54,11 @@ def get_phrase_counts_and_metrics(
         category_to_label_phrases = {category: list() for category in litbank.ENTITY_CATEGORIES}
         category_to_pred_phrases = {category: list() for category in litbank.ENTITY_CATEGORIES}
         for phrase in label_phrases_all:
-            category, _, _, _ = phrase
+            category = phrase[0]
             category_to_label_phrases[category].append(phrase)
         pred_phrases_all = sentence_pred_phrases[s]
         for phrase in pred_phrases_all:
-            category, _, _, _ = phrase
+            category = phrase[0]
             category_to_pred_phrases[category].append(phrase)
 
         # Count true positives and denominators.
