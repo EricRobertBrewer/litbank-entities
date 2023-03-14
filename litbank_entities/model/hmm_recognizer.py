@@ -14,32 +14,31 @@ class HMMEntityRecognizer(recognizer.EntityRecognizer):
     From `https://web.stanford.edu/~jurafsky/slp3/8.pdf`.
     """
 
-    def __init__(self, ignore_nested=False):
+    def __init__(self, categories, ignore_nested=False):
+        if categories != litbank.ENTITY_CATEGORIES:
+            raise ValueError('HMM needs to be refactored to allow category selection. For now, select all categories.')
+        super().__init__(categories)
         self.ignore_nested = ignore_nested
 
-        self.v = None
-        self.token_to_index = None
+        self.v = None  # Vocabulary and frequencies.
+        self.n = None  # Size of vocabulary, |V|.
 
         self.A = None  # Transition probabilities.
         self.p = None  # Initial state probabilities.
         self.B = None  # Emission probabilities.
 
     def train(self, sentence_tokens: List[List[str]], sentence_labels: List[List[List[str]]]):
-        sentence_tokens = linguistics.process(sentence_tokens)
-        self.v = linguistics.get_vocabulary(sentence_tokens)
-        self.token_to_index = {token: i for i, (token, _) in enumerate(self.v)}
-        X = [[self.token_to_index[token]
-              for token in tokens]
-             for tokens in sentence_tokens]
-        Y = [[[litbank.ENTITY_TAG_TO_INDEX[nest_label]
+        self.v = linguistics.get_vocabulary_counts(sentence_tokens)
+        self.n, X = linguistics.get_n_sentence_token_ids(sentence_tokens, self.v)
+        Y = [[[litbank.ENTITY_LABEL_TO_ID[nest_label]
                for nest_label in label]
               for label in labels]
              for labels in sentence_labels]
 
-        Q = litbank.ENTITY_TAGS
+        Q = litbank.ENTITY_LABELS
         self.A = np.zeros((len(Q), len(Q)))
         self.p = np.zeros(len(Q))
-        self.B = np.zeros((len(Q), len(self.v)))
+        self.B = np.zeros((len(Q), self.n))
 
         if self.ignore_nested:
             self._train_counts_columnar(X, Y)
@@ -62,7 +61,7 @@ class HMMEntityRecognizer(recognizer.EntityRecognizer):
                 self.B[y[t], x[t]] += 1
 
     def _train_counts_nested(self, X, Y):
-        q_out = litbank.ENTITY_TAG_TO_INDEX['O']
+        q_out = litbank.ENTITY_LABEL_TO_ID['O']
         for s, y in enumerate(Y):
             x = X[s]
             # Note each unique initial state.
@@ -93,11 +92,10 @@ class HMMEntityRecognizer(recognizer.EntityRecognizer):
                         self.B[q, x[t]] += 1
 
     def predict(self, sentence_tokens: List[List[str]]) -> List[List[List[str]]]:
-        X = [[self._get_index(token) for token in tokens]
-             for tokens in sentence_tokens]
+        _, X = linguistics.get_n_sentence_token_ids(sentence_tokens, self.v)
         Y = list()
 
-        Q = litbank.ENTITY_TAGS
+        Q = litbank.ENTITY_LABELS
 
         for s, x in enumerate(X):
             viterbi = np.zeros((len(Q), len(x)))
@@ -116,10 +114,13 @@ class HMMEntityRecognizer(recognizer.EntityRecognizer):
             path = [q_max]
             while len(path) < len(x):
                 path.insert(0, backpointer[path[0], len(x) - 1 - len(path)])
-            y = [[litbank.ENTITY_TAGS[q]] for q in path]
+            y = [[litbank.ENTITY_LABELS[q]] for q in path]
             Y.append(y)
 
         return Y
 
-    def _get_index(self, token):
-        return self.token_to_index[token if token in self.token_to_index.keys() else linguistics.TOKEN_OOV]
+    def save_model(self, dir_):
+        pass
+
+    def load_model(self, dir_):
+        pass

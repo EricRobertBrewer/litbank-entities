@@ -3,6 +3,9 @@ from typing import List
 
 class EntityRecognizer:
 
+    def __init__(self, categories):
+        self.categories = categories
+
     def train(self, sentence_tokens: List[List[str]], sentence_labels: List[List[List[str]]]):
         """
         Model the relationship between the tokens in each sequence (sentence) and
@@ -22,4 +25,10 @@ class EntityRecognizer:
         :param sentence_tokens: Sequences of tokens.
         :return: List of multidimensional labels.
         """
+        raise NotImplementedError()
+
+    def save_model(self, dir_):
+        raise NotImplementedError()
+
+    def load_model(self, dir_):
         raise NotImplementedError()

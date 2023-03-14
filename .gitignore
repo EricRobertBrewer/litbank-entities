@@ -1,5 +1,7 @@
 # Data set.
 litbank/
+models/
+output/
 
 # JetBrains.
 .idea/
