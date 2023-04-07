@@ -5,7 +5,7 @@ import time
 import numpy as np
 
 from litbank_entities import linguistics, litbank, phrase_metrics as pm
-from litbank_entities.model import crf_recognizer, hmm_recognizer, zero_r_recognizer
+from litbank_entities.model import crf_recognizer, hmm_recognizer, bert_recognizer, zero_r_recognizer
 
 DEBUG = False
 
@@ -18,7 +18,7 @@ def main():
         description='Perform named-entity recognition over `litbank` text samples.'
     )
     parser.add_argument('classname',
-                        choices=['crf', 'hmm', 'zero'],
+                        choices=['bert', 'crf', 'hmm', 'zero'],
                         help='Name of the model.')
     parser.add_argument('--folds',
                         '-F',
@@ -69,8 +69,7 @@ def main():
 def cross_validation(classname, folds=10, seed=1, mix_texts=False, category_set=None, keep_ratio=1.0):
     if folds < 2:
         raise ValueError('Unexpected number of folds: {:d}'.format(folds))
-    if seed is not None:
-        np.random.seed(seed)
+    rng = np.random.default_rng(seed=seed)
     if category_set is None:
         category_set = litbank.ENTITY_CATEGORY_SET
 
@@ -96,7 +95,7 @@ def cross_validation(classname, folds=10, seed=1, mix_texts=False, category_set=
         # Allow text mixing; flatten texts first.
         sentence_tokens, sentence_labels = litbank.flatten_texts(text_sentence_tokens, text_sentence_labels)
         n = len(sentence_tokens)
-        indices = np.random.permutation(n)
+        indices = rng.permutation(n)
         for i in range(folds):
             test_start, test_end = int(n / folds * i), int(n / folds * (i + 1))
             test_indices = indices[test_start:test_end]
@@ -111,7 +110,7 @@ def cross_validation(classname, folds=10, seed=1, mix_texts=False, category_set=
     else:
         # Flatten texts after splitting data.
         n = len(text_sentence_tokens)
-        indices = np.random.permutation(n)
+        indices = rng.permutation(n)
         for i in range(folds):
             test_start, test_end = int(n / folds * i), int(n / folds * (i + 1))
             test_indices = indices[test_start:test_end]
@@ -132,8 +131,9 @@ def cross_validation(classname, folds=10, seed=1, mix_texts=False, category_set=
         print('Starting fold {:d} / {:d}.'.format(fold + 1, folds))
         train_pairs = list()
         for pair in zip(*train_instances):
-            if keep_ratio > np.random.rand():
+            if keep_ratio > rng.uniform():
                 train_pairs.append(pair)
+        rng.shuffle(train_pairs)
         train_instances = zip(*train_pairs)
         model = create_model(classname, categories, resources)
         category_counts, category_metrics = evaluate(model, train_instances, test_instances, categories)
@@ -158,6 +158,8 @@ def create_model_resources(classname):
     if classname == 'crf':
         nlp = linguistics.get_nlp()
         return nlp,
+    if classname == 'bert':
+        return bert_recognizer.create_model_resources()
     raise ValueError('Unexpected model class name: {}'.format(classname))
 
 
@@ -171,6 +173,11 @@ def create_model(classname, categories, resources):
         if DEBUG:
             kwargs['epochs'] = 1
         return crf_recognizer.CRFEntityRecognizer(categories, *resources, **kwargs)
+    if classname == 'bert':
+        kwargs = dict()
+        if DEBUG:
+            kwargs['epochs'] = 1
+        return bert_recognizer.BertEntityRecognizer(categories, *resources, **kwargs)
     raise ValueError('Unexpected model class name: {}'.format(classname))
 
 
