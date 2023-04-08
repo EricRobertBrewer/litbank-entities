@@ -20,7 +20,7 @@ def create_model_resources():
 
 class BertEntityRecognizer(recognizer.EntityRecognizer):
 
-    def __init__(self, categories, *resources, lr=2e-5, epochs=3, batch_size=32):
+    def __init__(self, categories, *resources, lr=2e-5, epochs=3, batch_size=8):
         if len(categories) != 1:
             raise ValueError('Categories has to be 1 right now!')
         self.category = categories[0]

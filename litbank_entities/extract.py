@@ -21,54 +21,47 @@ def main():
                         choices=['bert', 'crf', 'hmm', 'zero'],
                         help='Name of the model.')
     parser.add_argument('--folds',
-                        '-F',
                         default=10,
                         type=int,
                         help='Number of folds for cross-validation.')
+    parser.add_argument('--test_ratio',
+                        type=float,
+                        required=False,
+                        help='Ratio of test data for a single evaluation.')
     parser.add_argument('--seed',
-                        '-S',
                         default=1,
                         type=int,
                         help='Seed for random number generator.')
-    parser.add_argument('--mix_texts',
-                        '-M',
-                        action='store_true',
-                        help='Flag to allow sampling of train and test instances from the same text.')
     parser.add_argument('--categories',
-                        '-C',
                         default='PER,FAC,GPE,LOC,VEH,ORG',
                         type=str,
                         help='Comma-separated category names, e.g., `PER,LOC`.')
     parser.add_argument('--keep_ratio',
-                        '-K',
                         default=1.0,
                         type=float,
                         help='Portion of training data to use.')
     parser.add_argument('--debug',
-                        '-D',
                         action='store_true',
                         help='Flag to indicate debug mode.')
 
     args = parser.parse_args()
-    classname = args.classname
-    seed = args.seed
-    folds = args.folds
-    mix_texts = args.mix_texts
-    category_set = set(args.categories.split(','))
-    keep_ratio = args.keep_ratio
     DEBUG = args.debug
-    cross_validation(
-        classname,
-        folds=folds,
-        seed=seed,
-        mix_texts=mix_texts,
-        category_set=category_set,
-        keep_ratio=keep_ratio)
+    run(
+        args.classname,
+        folds=args.folds,
+        test_ratio=args.test_ratio,
+        seed=args.seed,
+        category_set=set(args.categories.split(',')),
+        keep_ratio=args.keep_ratio)
 
 
-def cross_validation(classname, folds=10, seed=1, mix_texts=False, category_set=None, keep_ratio=1.0):
-    if folds < 2:
-        raise ValueError('Unexpected number of folds: {:d}'.format(folds))
+def run(classname, folds=10, test_ratio=None, seed=1, category_set=None, keep_ratio=1.0):
+    if test_ratio is None:
+        if folds < 2:
+            raise ValueError('Unexpected number of folds: {:d}'.format(folds))
+    else:
+        if test_ratio <= 0.0 or test_ratio >= 1.0:
+            raise ValueError('Unexpected test ratio: {:f}'.format(test_ratio))
     rng = np.random.default_rng(seed=seed)
     if category_set is None:
         category_set = litbank.ENTITY_CATEGORY_SET
@@ -79,61 +72,34 @@ def cross_validation(classname, folds=10, seed=1, mix_texts=False, category_set=
     params_path = os.path.join(class_dir, '{:d}-params.txt'.format(timestamp))
     with open(params_path, 'w') as fd:
         fd.write('classname: {}\n'.format(classname))
-        fd.write('folds: {:d}\n'.format(folds))
+        if test_ratio is None:
+            fd.write('folds: {:d}\n'.format(folds))
+        else:
+            fd.write('test_ratio: {:.2f}\n'.format(test_ratio))
         fd.write('seed: {:d}\n'.format(seed))
-        fd.write('mix_texts: {}\n'.format(str(mix_texts)))
         fd.write('category_set: {}\n'.format(str(category_set)))
         fd.write('keep_ratio: {:.4f}\n'.format(keep_ratio))
 
     text_sentence_tokens, text_sentence_labels = litbank.get_text_sentence_tokens_labels()
+
     if DEBUG:
-        text_sentence_tokens = text_sentence_tokens[:1]
-        text_sentence_labels = text_sentence_labels[:1]
-        mix_texts = True
-    fold_datasets = list()
-    if mix_texts:
-        # Allow text mixing; flatten texts first.
-        sentence_tokens, sentence_labels = litbank.flatten_texts(text_sentence_tokens, text_sentence_labels)
-        n = len(sentence_tokens)
-        indices = rng.permutation(n)
-        for i in range(folds):
-            test_start, test_end = int(n / folds * i), int(n / folds * (i + 1))
-            test_indices = indices[test_start:test_end]
-            train_indices = np.concatenate((indices[:test_start], indices[test_end:]))
-            test_sentence_tokens = [sentence_tokens[index] for index in test_indices]
-            test_sentence_labels = [sentence_labels[index] for index in test_indices]
-            train_sentence_tokens = [sentence_tokens[index] for index in train_indices]
-            train_sentence_labels = [sentence_labels[index] for index in train_indices]
-            test_instances = test_sentence_tokens, test_sentence_labels
-            train_instances = train_sentence_tokens, train_sentence_labels
-            fold_datasets.append((train_instances, test_instances))
-    else:
-        # Flatten texts after splitting data.
-        n = len(text_sentence_tokens)
-        indices = rng.permutation(n)
-        for i in range(folds):
-            test_start, test_end = int(n / folds * i), int(n / folds * (i + 1))
-            test_indices = indices[test_start:test_end]
-            train_indices = np.concatenate((indices[:test_start], indices[test_end:]))
-            test_text_sentence_tokens = [text_sentence_tokens[index] for index in test_indices]
-            test_text_sentence_labels = [text_sentence_labels[index] for index in test_indices]
-            train_text_sentence_tokens = [text_sentence_tokens[index] for index in train_indices]
-            train_text_sentence_labels = [text_sentence_labels[index] for index in train_indices]
-            test_instances = litbank.flatten_texts(test_text_sentence_tokens, test_text_sentence_labels)
-            train_instances = litbank.flatten_texts(train_text_sentence_tokens, train_text_sentence_labels)
-            fold_datasets.append((train_instances, test_instances))
+        # Emulate each sentence from the first text as belonging to separate texts.
+        text_sentence_tokens = [[tokens] for tokens in text_sentence_tokens[0]]
+        text_sentence_labels = [[labels] for labels in text_sentence_labels[0]]
+        test_ratio = 1 / 5
+
+    fold_datasets = get_fold_datasets(text_sentence_tokens, text_sentence_labels, folds, test_ratio, rng)
 
     # Evaluate for each fold.
     fold_category_counts, fold_category_metrics = list(), list()
     categories = [category for category in litbank.ENTITY_CATEGORIES if category in category_set]
     resources = create_model_resources(classname)
     for fold, (train_instances, test_instances) in enumerate(fold_datasets):
-        print('Starting fold {:d} / {:d}.'.format(fold + 1, folds))
+        print('Starting fold {:d} / {:d}.'.format(fold + 1, len(fold_datasets)))
         train_pairs = list()
         for pair in zip(*train_instances):
             if keep_ratio > rng.uniform():
                 train_pairs.append(pair)
-        rng.shuffle(train_pairs)
         train_instances = zip(*train_pairs)
         model = create_model(classname, categories, resources)
         category_counts, category_metrics = evaluate(model, train_instances, test_instances, categories)
@@ -148,6 +114,36 @@ def cross_validation(classname, folds=10, seed=1, mix_texts=False, category_set=
         for level, category_metrics in zip(('Macro', 'Micro'), (category_metrics_macro, category_metrics_micro)):
             fd.write('{}:\n'.format(level))
             write_results(category_metrics, categories, fd)
+
+
+def get_fold_datasets(text_sentence_tokens, text_sentence_labels, folds, test_ratio, rng):
+    fold_datasets = list()
+    text_sentence_pairs = list(zip(text_sentence_tokens, text_sentence_labels))
+    rng.shuffle(text_sentence_pairs)
+    n = len(text_sentence_pairs)
+    if test_ratio is None:
+        # Cross-validation.
+        for i in range(folds):
+            train_text_instances, test_text_instances = \
+                get_split_instances(text_sentence_pairs, int(n / folds * i), int(n / folds * (i + 1)))
+            train_instances = litbank.flatten_texts(*train_text_instances)
+            test_instances = litbank.flatten_texts(*test_text_instances)
+            fold_datasets.append((train_instances, test_instances))
+    else:
+        # Single evaluation.
+        train_text_instances, test_text_instances = \
+            get_split_instances(text_sentence_pairs, 0, int(n * test_ratio))
+        train_instances = litbank.flatten_texts(*train_text_instances)
+        test_instances = litbank.flatten_texts(*test_text_instances)
+        fold_datasets.append((train_instances, test_instances))
+
+    return fold_datasets
+
+
+def get_split_instances(pairs, test_start, test_end):
+    train_pairs = pairs[:test_start] + pairs[test_end:]
+    test_pairs = pairs[test_start:test_end]
+    return list(zip(*train_pairs)), list(zip(*test_pairs))
 
 
 def create_model_resources(classname):
