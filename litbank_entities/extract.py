@@ -24,10 +24,10 @@ def main():
                         default=10,
                         type=int,
                         help='Number of folds for cross-validation.')
-    parser.add_argument('--test_ratio',
-                        type=float,
+    parser.add_argument('--fold',
+                        type=int,
                         required=False,
-                        help='Ratio of test data for a single evaluation.')
+                        help='Fold number for cross-evaluation when folds have to be done in separate processes.')
     parser.add_argument('--seed',
                         default=1,
                         type=int,
@@ -49,22 +49,24 @@ def main():
     run(
         args.classname,
         folds=args.folds,
-        test_ratio=args.test_ratio,
+        fold=args.fold,
         seed=args.seed,
         category_set=set(args.categories.split(',')),
         keep_ratio=args.keep_ratio)
 
 
-def run(classname, folds=10, test_ratio=None, seed=1, category_set=None, keep_ratio=1.0):
-    if test_ratio is None:
-        if folds < 2:
-            raise ValueError('Unexpected number of folds: {:d}'.format(folds))
-    else:
-        if test_ratio <= 0.0 or test_ratio >= 1.0:
-            raise ValueError('Unexpected test ratio: {:f}'.format(test_ratio))
+def run(classname, folds=10, fold=None, seed=1, category_set=None, keep_ratio=1.0):
+    if folds < 2:
+        raise ValueError('Unexpected number of folds: {:d}'.format(folds))
+    if fold is not None:
+        if fold < 1 or fold > folds:
+            raise ValueError('Unexpected fold, given {:d} folds: {:d}'.format(folds, fold))
+
     rng = np.random.default_rng(seed=seed)
+
     if category_set is None:
         category_set = litbank.ENTITY_CATEGORY_SET
+    categories = [category for category in litbank.ENTITY_CATEGORIES if category in category_set]
 
     timestamp = int(time.time())
     class_dir = os.path.join(OUTPUT_DIR, classname)
@@ -72,10 +74,9 @@ def run(classname, folds=10, test_ratio=None, seed=1, category_set=None, keep_ra
     params_path = os.path.join(class_dir, '{:d}-params.txt'.format(timestamp))
     with open(params_path, 'w') as fd:
         fd.write('classname: {}\n'.format(classname))
-        if test_ratio is None:
-            fd.write('folds: {:d}\n'.format(folds))
-        else:
-            fd.write('test_ratio: {:.2f}\n'.format(test_ratio))
+        fd.write('folds: {:d}\n'.format(folds))
+        if fold is not None:
+            fd.write('fold: {:d}\n'.format(fold))
         fd.write('seed: {:d}\n'.format(seed))
         fd.write('category_set: {}\n'.format(str(category_set)))
         fd.write('keep_ratio: {:.4f}\n'.format(keep_ratio))
@@ -86,23 +87,24 @@ def run(classname, folds=10, test_ratio=None, seed=1, category_set=None, keep_ra
         # Emulate each sentence from the first text as belonging to separate texts.
         text_sentence_tokens = [[tokens] for tokens in text_sentence_tokens[0]]
         text_sentence_labels = [[labels] for labels in text_sentence_labels[0]]
-        test_ratio = 1 / 5
 
-    fold_datasets = get_fold_datasets(text_sentence_tokens, text_sentence_labels, folds, test_ratio, rng)
+    fold_datasets = get_fold_datasets(text_sentence_tokens, text_sentence_labels, folds, fold, rng)
 
     # Evaluate for each fold.
     fold_category_counts, fold_category_metrics = list(), list()
-    categories = [category for category in litbank.ENTITY_CATEGORIES if category in category_set]
     resources = create_model_resources(classname)
-    for fold, (train_instances, test_instances) in enumerate(fold_datasets):
-        print('Starting fold {:d} / {:d}.'.format(fold + 1, len(fold_datasets)))
+    for i, (train_instances, test_instances) in enumerate(fold_datasets):
+        print('Starting fold {:d} / {:d}.'.format(i + 1, len(fold_datasets)))
         train_pairs = list()
         for pair in zip(*train_instances):
             if keep_ratio > rng.uniform():
                 train_pairs.append(pair)
         train_instances = zip(*train_pairs)
         model = create_model(classname, categories, resources)
-        category_counts, category_metrics = evaluate(model, train_instances, test_instances, categories)
+        category_counts, category_metrics, test_sentence_preds = \
+            evaluate(model, train_instances, test_instances, categories)
+        fold_ = i + 1 if fold is None else fold
+        write_instances(test_instances, test_sentence_preds, categories, timestamp, fold_, class_dir)
         fold_category_counts.append(category_counts)
         fold_category_metrics.append(category_metrics)
 
@@ -116,12 +118,12 @@ def run(classname, folds=10, test_ratio=None, seed=1, category_set=None, keep_ra
             write_results(category_metrics, categories, fd)
 
 
-def get_fold_datasets(text_sentence_tokens, text_sentence_labels, folds, test_ratio, rng):
+def get_fold_datasets(text_sentence_tokens, text_sentence_labels, folds, fold, rng):
     fold_datasets = list()
     text_sentence_pairs = list(zip(text_sentence_tokens, text_sentence_labels))
     rng.shuffle(text_sentence_pairs)
     n = len(text_sentence_pairs)
-    if test_ratio is None:
+    if fold is None:
         # Cross-validation.
         for i in range(folds):
             train_text_instances, test_text_instances = \
@@ -132,7 +134,7 @@ def get_fold_datasets(text_sentence_tokens, text_sentence_labels, folds, test_ra
     else:
         # Single evaluation.
         train_text_instances, test_text_instances = \
-            get_split_instances(text_sentence_pairs, 0, int(n * test_ratio))
+            get_split_instances(text_sentence_pairs, int(n / folds * (fold - 1)), int(n / folds * fold))
         train_instances = litbank.flatten_texts(*train_text_instances)
         test_instances = litbank.flatten_texts(*test_text_instances)
         fold_datasets.append((train_instances, test_instances))
@@ -185,7 +187,35 @@ def evaluate(model, train_instances, test_instances, categories):
     test_sentence_tokens, test_sentence_labels = test_instances
     model.train(*train_instances)
     test_sentence_preds = model.predict(test_sentence_tokens)
-    return pm.get_phrase_counts_and_metrics(test_sentence_labels, test_sentence_preds, categories)
+    category_counts, category_metrics = \
+        pm.get_phrase_counts_and_metrics(test_sentence_labels, test_sentence_preds, categories)
+    return category_counts, category_metrics, test_sentence_preds
+
+
+def write_instances(instances, sentence_preds, categories, timestamp, fold, class_dir):
+    sentence_tokens, sentence_labels = instances
+    category_sentence_label_phrases = litbank.get_category_sentence_phrases(sentence_labels, categories)
+    category_sentence_pred_phrases = litbank.get_category_sentence_phrases(sentence_preds, categories)
+    for k, category in enumerate(categories):
+        sentence_label_phrases = category_sentence_label_phrases[k]
+        sentence_pred_phrases = category_sentence_pred_phrases[k]
+        instances_fname = '{:d}-instances-{}-{:d}.txt'.format(timestamp, category, fold)
+        instances_path = os.path.join(class_dir, instances_fname)
+        with open(instances_path, 'w') as fd:
+            fd.write('{:d}\n'.format(len(sentence_tokens)))
+            for i, tokens in enumerate(sentence_tokens):
+                label_phrases = sentence_label_phrases[i]
+                pred_phrases = sentence_pred_phrases[i]
+                fd.write('\n')
+                fd.write('{:d}|{}\n'.format(len(tokens), ' '.join(tokens)))
+                fd.write('{:d}\n'.format(len(label_phrases)))
+                for phrase in label_phrases:
+                    start, end = phrase[:2]
+                    fd.write('{:d}|{:d}|{}\n'.format(start, end, ' '.join(tokens[start:end])))
+                fd.write('{:d}\n'.format(len(pred_phrases)))
+                for phrase in pred_phrases:
+                    start, end = phrase[:2]
+                    fd.write('{:d}|{:d}|{}\n'.format(start, end, ' '.join(tokens[start:end])))
 
 
 def write_results(category_metrics, categories, fd):

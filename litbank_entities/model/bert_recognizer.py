@@ -98,12 +98,12 @@ class BertEntityRecognizer(recognizer.EntityRecognizer):
 
     def save_model(self, dir_):
         model_path = os.path.join(dir_, 'model_{}'.format(self.category))
-        self.model.save(model_path)
+        self.model.save_pretrained(model_path)
 
     def load_model(self, dir_):
         model_path = os.path.join(dir_, 'model_{}'.format(self.category))
-        self.model = tf.keras.models.load_model(model_path)
-        
+        self.model = TFDistilBertForTokenClassification.from_pretrained(model_path)
+
 
 def expand_tag_ids(sentence_tag_ids, offset_mapping, fill_id=litbank.ENTITY_TAG_TO_ID['O']):
     sentence_tag_pieces = list()
