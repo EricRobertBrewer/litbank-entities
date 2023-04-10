@@ -109,7 +109,6 @@ class CRFEntityRecognizer(recognizer.EntityRecognizer):
         return sentence_labels
 
     def save_model(self, dir_):
-        os.makedirs(dir_, exist_ok=True)
         members = (self.seq_len, self.c_to_id, self.k_char, self.short_to_id, self.k_shorts, self.pos_to_id, self.k_pos)
         with open(os.path.join(dir_, '_members.pickle'), 'wb') as fd:
             pickle.dump(members, fd)

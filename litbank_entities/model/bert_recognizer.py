@@ -1,3 +1,4 @@
+import os
 from typing import List
 
 import tensorflow as tf
@@ -20,7 +21,7 @@ def create_model_resources():
 
 class BertEntityRecognizer(recognizer.EntityRecognizer):
 
-    def __init__(self, categories, *resources, lr=2e-5, epochs=3, batch_size=8):
+    def __init__(self, categories, *resources, lr=2e-5, epochs=2, batch_size=8):
         if len(categories) != 1:
             raise ValueError('Categories has to be 1 right now!')
         self.category = categories[0]
@@ -32,12 +33,11 @@ class BertEntityRecognizer(recognizer.EntityRecognizer):
         self.epochs = epochs
         self.batch_size = batch_size
 
-        self.seq_len = None
+        self.seq_len = 166 + 2  # Based on analysis of entire data set.
+
         self.model = None
 
     def train(self, sentence_tokens: List[List[str]], sentence_labels: List[List[List[str]]]):
-        self.seq_len = 166 + 2  # Based on analysis of entire data set.
-
         # Encode tokens in word pieces.
         encodings, offset_mapping = self.tokenize(sentence_tokens)
 
@@ -63,10 +63,11 @@ class BertEntityRecognizer(recognizer.EntityRecognizer):
 
     def predict(self, sentence_tokens: List[List[str]]) -> List[List[List[str]]]:
         encodings, offset_mapping = self.tokenize(sentence_tokens, return_tensors='tf')
+        dataset = tf.data.Dataset.from_tensor_slices((dict(encodings),))
+        sentence_tag_piece_preds = self.model.predict(dataset, batch_size=self.batch_size)
 
         # Contract tag IDs (that are expanded by the model).
         sentence_labels = list()
-        sentence_tag_piece_preds = self.model(**encodings)
         sentence_tag_pieces = tf.math.argmax(sentence_tag_piece_preds.logits, axis=-1)
         for tag_pieces, offsets in zip(sentence_tag_pieces, offset_mapping):
             labels = list()
@@ -95,6 +96,14 @@ class BertEntityRecognizer(recognizer.EntityRecognizer):
         encodings.pop('offset_mapping')
         return encodings, offset_mapping
 
+    def save_model(self, dir_):
+        model_path = os.path.join(dir_, 'model_{}'.format(self.category))
+        self.model.save(model_path)
+
+    def load_model(self, dir_):
+        model_path = os.path.join(dir_, 'model_{}'.format(self.category))
+        self.model = tf.keras.models.load_model(model_path)
+        
 
 def expand_tag_ids(sentence_tag_ids, offset_mapping, fill_id=litbank.ENTITY_TAG_TO_ID['O']):
     sentence_tag_pieces = list()
