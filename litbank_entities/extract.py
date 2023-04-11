@@ -36,6 +36,9 @@ def main():
                         default='PER,FAC,GPE,LOC,VEH,ORG',
                         type=str,
                         help='Comma-separated category names, e.g., `PER,LOC`.')
+    parser.add_argument('--skip_processing',
+                        action='store_true',
+                        help='Flag to leave text un-processed (such as digits -> `#`).')
     parser.add_argument('--keep_ratio',
                         default=1.0,
                         type=float,
@@ -52,10 +55,11 @@ def main():
         fold=args.fold,
         seed=args.seed,
         category_set=set(args.categories.split(',')),
+        skip_processing=args.skip_processing,
         keep_ratio=args.keep_ratio)
 
 
-def run(classname, folds=10, fold=None, seed=1, category_set=None, keep_ratio=1.0):
+def run(classname, folds=10, fold=None, seed=1, category_set=None, skip_processing=False, keep_ratio=1.0):
     if folds < 2:
         raise ValueError('Unexpected number of folds: {:d}'.format(folds))
     if fold is not None:
@@ -79,6 +83,7 @@ def run(classname, folds=10, fold=None, seed=1, category_set=None, keep_ratio=1.
             fd.write('fold: {:d}\n'.format(fold))
         fd.write('seed: {:d}\n'.format(seed))
         fd.write('category_set: {}\n'.format(str(category_set)))
+        fd.write('skip_processing: {}\n'.format(str(skip_processing)))
         fd.write('keep_ratio: {:.4f}\n'.format(keep_ratio))
 
     text_sentence_tokens, text_sentence_labels = litbank.get_text_sentence_tokens_labels()
@@ -88,13 +93,14 @@ def run(classname, folds=10, fold=None, seed=1, category_set=None, keep_ratio=1.
         text_sentence_tokens = [[tokens] for tokens in text_sentence_tokens[0]]
         text_sentence_labels = [[labels] for labels in text_sentence_labels[0]]
 
-    fold_datasets = get_fold_datasets(text_sentence_tokens, text_sentence_labels, folds, fold, rng)
+    fold_datasets = get_fold_datasets(text_sentence_tokens, text_sentence_labels, folds, fold, rng, skip_processing)
 
     # Evaluate for each fold.
     fold_category_counts, fold_category_metrics = list(), list()
     resources = create_model_resources(classname)
     for i, (train_instances, test_instances) in enumerate(fold_datasets):
-        print('Starting fold {:d} / {:d}.'.format(i + 1, len(fold_datasets)))
+        fold_ = i + 1 if fold is None else fold
+        print('Starting fold {:d} / {:d}.'.format(fold_, folds))
         train_pairs = list()
         for pair in zip(*train_instances):
             if keep_ratio > rng.uniform():
@@ -103,7 +109,6 @@ def run(classname, folds=10, fold=None, seed=1, category_set=None, keep_ratio=1.
         model = create_model(classname, categories, resources)
         category_counts, category_metrics, test_sentence_preds = \
             evaluate(model, train_instances, test_instances, categories)
-        fold_ = i + 1 if fold is None else fold
         write_instances(test_instances, test_sentence_preds, categories, timestamp, fold_, class_dir)
         fold_category_counts.append(category_counts)
         fold_category_metrics.append(category_metrics)
@@ -118,8 +123,20 @@ def run(classname, folds=10, fold=None, seed=1, category_set=None, keep_ratio=1.
             write_results(category_metrics, categories, fd)
 
 
-def get_fold_datasets(text_sentence_tokens, text_sentence_labels, folds, fold, rng):
+def get_fold_datasets(text_sentence_tokens, text_sentence_labels, folds, fold, rng, skip_processing):
     fold_datasets = list()
+
+    def _process_and_append(_train_text_instances, _test_text_instances):
+        nonlocal fold_datasets
+        _train_instances = litbank.flatten_texts(*_train_text_instances)
+        _test_instances = litbank.flatten_texts(*_test_text_instances)
+        if not skip_processing:
+            _train_instances = linguistics.process(*_train_instances)
+            _test_instances = linguistics.process(*_test_instances)
+        _train_instances = litbank.split_large_sentences(*_train_instances)
+        _test_instances = litbank.split_large_sentences(*_test_instances)
+        fold_datasets.append((_train_instances, _test_instances))
+
     text_sentence_pairs = list(zip(text_sentence_tokens, text_sentence_labels))
     rng.shuffle(text_sentence_pairs)
     n = len(text_sentence_pairs)
@@ -128,16 +145,12 @@ def get_fold_datasets(text_sentence_tokens, text_sentence_labels, folds, fold, r
         for i in range(folds):
             train_text_instances, test_text_instances = \
                 get_split_instances(text_sentence_pairs, int(n / folds * i), int(n / folds * (i + 1)))
-            train_instances = litbank.flatten_texts(*train_text_instances)
-            test_instances = litbank.flatten_texts(*test_text_instances)
-            fold_datasets.append((train_instances, test_instances))
+            _process_and_append(train_text_instances, test_text_instances)
     else:
         # Single evaluation.
         train_text_instances, test_text_instances = \
             get_split_instances(text_sentence_pairs, int(n / folds * (fold - 1)), int(n / folds * fold))
-        train_instances = litbank.flatten_texts(*train_text_instances)
-        test_instances = litbank.flatten_texts(*test_text_instances)
-        fold_datasets.append((train_instances, test_instances))
+        _process_and_append(train_text_instances, test_text_instances)
 
     return fold_datasets
 
@@ -180,10 +193,6 @@ def create_model(classname, categories, resources):
 
 
 def evaluate(model, train_instances, test_instances, categories):
-    train_instances = linguistics.process(*train_instances)
-    train_instances = litbank.split_large_sentences(*train_instances)
-    test_instances = linguistics.process(*test_instances)
-    test_instances = litbank.split_large_sentences(*test_instances)
     test_sentence_tokens, test_sentence_labels = test_instances
     model.train(*train_instances)
     test_sentence_preds = model.predict(test_sentence_tokens)
